@@ -1,7 +1,7 @@
 #lang plai-typed
 (print-only-errors #t)
 
-#|-----------------------------------------------------------
+#|-------------------------------------------------------------
 Jacob Ochs
 Memory Management & Garbage Collection
 CS-105: Programming Languages
@@ -11,7 +11,7 @@ Minor conceptual help given to:
     Jason Campbell
 Minor conceptual help received from:
     James Solum, Jason Campbell
-|#
+---------------------------------------------------------------|#
 
 
 ;; type for surface representations
@@ -34,7 +34,7 @@ Minor conceptual help received from:
   [recS (name : symbol) (f : ExprS) (b : ExprS)]
   [firstS (e : ExprS)]
   [restS (e : ExprS)]
- ; [consS (f : ExprS) (r : ExprS)]
+  [consS (f : ExprS) (r : ExprS)]
   )
 
 ;; type for core representations
@@ -51,14 +51,21 @@ Minor conceptual help received from:
   [setC (v : symbol) (a : ExprC)]
   [seqC (e1 : ExprC) (e2 : ExprC)]
   [if0C (test : ExprC) (then : ExprC) (else : ExprC)]
+  [consC (f : ExprC) (r : ExprC)]
   )
 
 ;; types for values
 (define-type Value
   [numV (n : number)]
   [closV (param : symbol) (body : ExprC) (env : Env)]
-  [boxV (l : Location)])
+  [boxV (l : Location)]
+  [consV (f : ExprC) (r : ExprC)])
 
+
+
+;; type for returning both Value and Store from interp
+(define-type Result
+  [v*s (v : Value)])
 
 ;; types and defs for Environments and Stores
 (define-type-alias Location number)
@@ -120,8 +127,24 @@ Minor conceptual help received from:
                (alloc-mem num (add1 i) env)
                i))]
         [(>= i MEMORY_SIZE) (garbage-collect env)] ;;trigger GC
-        [else (error 'new-loc "invalid: must allocate either 1 or 2 memory locations")]))
+        [else (begin (display num)
+                (error 'new-loc "invalid: must allocate either 1 or 2 memory locations"))]))
 
+
+
+
+;; inserts a value into the store at the speciried location
+;; and marks this space as allocated in our free-list
+(define (override-store [val : Value] [loc : Location] [env : Env]) : number
+  (cond [(consV? val) (begin
+                        (vector-set! Store loc val)
+                        (alloc-mem 2 loc env))]
+        [else (begin
+                (vector-set! Store loc val)
+                (alloc-mem 1 loc env))]))
+
+
+;; ############################ NEW-LOC / FREE-LOC ##############################
 
 ;; "allocate" unique "memory" locations for values in our free-list
 ;; RUNTIME COMPLEXITY for new-loc is <= O(n), where n = MEMORY_SIZE,
@@ -130,15 +153,7 @@ Minor conceptual help received from:
 (define (new-loc [loc : number] [env : Env]) : number
   (let ([i 0])
     (alloc-mem loc i env)))
-
 (test/exn (new-loc 3 mt-Env) "invalid: must allocate either 1 or 2 memory locations")
-
-
-;; inserts a value into the store at the speciried location
-;; and marks this space as allocated in our free-list
-(define (override-store [val : Value] [loc : Location] [env : Env]) : number
-         (begin (vector-set! Store loc val)
-                (alloc-mem 0 loc env)))
 
 
 
@@ -158,6 +173,7 @@ Minor conceptual help received from:
 (test/exn (free-loc 5 5) "invalid arg: 2nd arg must be 1 or 2")
 
 
+;; ############################ GARBAGE COLLECTION FUNCS ##############################
 
 ;; reclaims spaces in the Store which correspond to the updated free-list
 (define (collect-store [env : Env] [i : number]) : void
@@ -169,8 +185,8 @@ Minor conceptual help received from:
            (vector-set! Store i (numV 0))
            (collect-store env (add1 i)))]
         [else (collect-store env (add1 i))]))
-
 ;(test (collect-store test-env MEMORY_SIZE) (display "GC finished"))
+
 
 
 ;; reclaims spaces in the free-list which correspond to the environment
@@ -198,12 +214,7 @@ Minor conceptual help received from:
 
 
 
-
-;; type for returning both Value and Store from interp
-(define-type Result
-  [v*s (v : Value)])
-
-
+;; ############################ PARSE ##############################
 (define (parse [s : s-expression]) : ExprS
   ;; parse S-expressions into a surface representation that can be programmatically manipulated
   (cond [(s-exp-number? s) (numS (s-exp->number s))]
@@ -236,6 +247,7 @@ Minor conceptual help received from:
                 [(rec) (recS (s-exp->symbol (second sl))
                              (parse (third sl))
                              (parse (fourth sl)))]
+                [(cons) (consS (parse (second sl)) (parse (third sl)))]
                 [else (appS (parse (first sl))
                             (parse (second sl)))])]))]
         [else (error 'parse "invalid input")]
@@ -256,6 +268,7 @@ Minor conceptual help received from:
                                                (unboxS (varS 'b))))))
 
 
+;; ############################ DESUGAR ##############################
 (define (desugar [as : ExprS]) : ExprC
   ;; transform programs in surface syntax representation into core representation
   (type-case ExprS as
@@ -279,7 +292,7 @@ Minor conceptual help received from:
     [recS (n f b) (desugar (withS n (numS -1) (seqS (setS n f) b)))]
     [firstS (e) (desugar e)]
     [restS (e) (desugar e)]
-    ;[consS (f r) (desugar f) (desugar r)]
+    [consS (f r) (consC (desugar f) (desugar r))]
     ))
 
 ;;desugar tests
@@ -312,7 +325,7 @@ Minor conceptual help received from:
 (test/exn (fetch 90) "memory request out of range")
 
 
-
+;; ############################ INTERP ##############################
 (define (interp [a : ExprC] [env : Env]) : Result
   (type-case ExprC a
     [numC (n) (v*s (numV n))]
@@ -322,9 +335,10 @@ Minor conceptual help received from:
                        (type-case Result (interp a env)
                          [v*s (v-a)
                               (let ([where (new-loc 1 env)])
-                                (interp (closV-body v-f)
-                                        (extend-env (bind (closV-param v-f) where) (closV-env v-f))
-                                        ))])])]
+                                (begin (override-store v-a where env)
+                                        (interp (closV-body v-f)
+                                                (extend-env (bind (closV-param v-f) where) (closV-env v-f))
+                                        )))])])]
     [plusC (l r) (type-case Result (interp l env)
                    [v*s (v-l)
                         (type-case Result (interp r env)
@@ -339,7 +353,8 @@ Minor conceptual help received from:
     [boxC (a) (type-case Result (interp a env)
                 [v*s (v-a)
                      (let ([where (new-loc 1 env)])
-                       (v*s (boxV where)
+                       (begin (override-store v-a where env)
+                              (v*s (boxV where))
                             ))])]
     [unboxC (a) (type-case Result (interp a env)
                   [v*s (v-a)
@@ -348,8 +363,9 @@ Minor conceptual help received from:
                      [v*s (v-b)
                           (type-case Result (interp a env)
                             [v*s (v-a)
+                                 (begin (override-store v-a (boxV-l v-b) env)
                                  (v*s v-a
-                                      )])])]
+                                      ))])])]
     [setC (v a) (type-case Result (interp a env)
                   [v*s (v-a)
                        (let ([where (lookup-binding v env)])
@@ -363,6 +379,7 @@ Minor conceptual help received from:
                          (if (and (numV? vt) (zero? (numV-n vt)))
                              (interp n env)
                              (interp y env))])]
+    [consC (f r) (v*s (consV f r))]
     ))
 
 
@@ -375,7 +392,7 @@ Minor conceptual help received from:
          (numV (* (numV-n l) (numV-n r)))]
         [else (error 'num* "bad arg")]))
 
-
+;; ############################ ASW ##############################
 (define (asw [s : s-expression]) : Value
   ;; A Swell Wrapper function to interp expressions
   ;;  w/out typing interp, desugar and parse and our-functions
@@ -385,10 +402,10 @@ Minor conceptual help received from:
 (test (asw '(* (+ 3 4) (* 2 3))) (numV 42))
 (test (asw '(- 7 2)) (numV 5))
 (test (asw '(+ 3 (- 1))) (numV 2))
-(test (asw '(with (x 7)
+#|(test (asw '(with (x 7)
                   (begin (set! x 0)
                          (+ x 1))))
-      (numV 1))
+      (numV 1))|#
 (test (interp (plusC (numC 1) (numC 2)) mt-Env)
       (v*s (numV 3)))
 
