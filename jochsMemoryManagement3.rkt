@@ -74,7 +74,7 @@ Minor conceptual help received from:
 (define Store (make-vector MEMORY_SIZE (numV placeholder))) ;; Store vector
 (define free-list (make-vector MEMORY_SIZE (numV placeholder))) ;; free-list with alloc mappings to Store
 (define mt-Sto empty)
-;(define override-store cons)
+(define full-Sto (make-vector MEMORY_SIZE (numV 99)))
 (define test-env (list (bind 'a 9) (bind 'b 2) (bind 'c 5)))
 (define full-env (list (bind 'a 1) (bind 'b 3) (bind 'c 4)
                        (bind 'a 19) (bind 'b 12) (bind 'c 11)
@@ -95,30 +95,30 @@ Minor conceptual help received from:
          (display free-list)))
 
 
-;; "allocate" unique "memory" locations for boxes, variables, and parameter values
-#|(define new-loc
-  (let ([n (box 0)])
-    (lambda () (begin (set-box! n (add1 (unbox n)))
-                      (unbox n)))))|#
 
 ;; executes all the computation for new-loc, using a scoped index var
-(define (alloc-mem [num : number] [i : number] [env : Env]) : void
+(define (alloc-mem [num : number] [i : number] [env : Env]) : number
   (cond [(and (= num 1) (< i MEMORY_SIZE))
          (if (not (= (numV-n (vector-ref free-list i)) 1))
-               (vector-set! free-list i (numV 1))
+               (begin
+                 (vector-set! free-list i (numV 1))
+                 i)
              (begin
                (display " memory allocated at i=")
                (display i)
-               (alloc-mem num (add1 i) env)))]
+               (alloc-mem num (add1 i) env)
+               i))]
         [(and (= num 2) (< i MEMORY_SIZE))
          (if (and (not (= (numV-n (vector-ref free-list i)) 1))
                   (not (= (numV-n (vector-ref free-list (add1 i))) 1)))
            (begin
              (vector-set! free-list i (numV 1))
-             (vector-set! free-list (add1 i) (numV 1)))
+             (vector-set! free-list (add1 i) (numV 1))
+             i)
            (begin
                (display i)
-               (alloc-mem num (add1 i) env)))]
+               (alloc-mem num (add1 i) env)
+               i))]
         [(>= i MEMORY_SIZE) (garbage-collect env)] ;;trigger GC
         [else (error 'new-loc "invalid: must allocate either 1 or 2 memory locations")]))
 
@@ -127,18 +127,19 @@ Minor conceptual help received from:
 ;; RUNTIME COMPLEXITY for new-loc is <= O(n), where n = MEMORY_SIZE,
 ;; because the length of the vector is the maximum value over which
 ;; we will recurse. Otherwise, it will return an error
-(define (new-loc [loc : number] [env : Env]) : void
+(define (new-loc [loc : number] [env : Env]) : number
   (let ([i 0])
     (alloc-mem loc i env)))
 
 (test/exn (new-loc 3 mt-Env) "invalid: must allocate either 1 or 2 memory locations")
 
 
-(define (override-store [val : Value] [loc : Location] [env : Env]) : void
+;; inserts a value into the store at the speciried location
+;; and marks this space as allocated in our free-list
+(define (override-store [val : Value] [loc : Location] [env : Env]) : number
          (begin (vector-set! Store loc val)
                 (alloc-mem 0 loc env)))
-;it's supposed to insert data into the storage at a specific location
-;and probably mark it as allocated in your free list
+
 
 
 ;; "free" unique "memory" locations for values in our free-list
@@ -159,7 +160,7 @@ Minor conceptual help received from:
 
 
 ;; reclaims spaces in the Store which correspond to the updated free-list
-(define (collect-store [env : Env] [i : number])
+(define (collect-store [env : Env] [i : number]) : void
   (cond [(>= i MEMORY_SIZE) (display "GC finished")]
         [(= (numV-n (vector-ref free-list i)) placeholder)
          (begin
@@ -168,6 +169,8 @@ Minor conceptual help received from:
            (vector-set! Store i (numV 0))
            (collect-store env (add1 i)))]
         [else (collect-store env (add1 i))]))
+
+;(test (collect-store test-env MEMORY_SIZE) (display "GC finished"))
 
 
 ;; reclaims spaces in the free-list which correspond to the environment
@@ -184,11 +187,12 @@ Minor conceptual help received from:
 ;; to the current memory use in the environment (ignoring fragmentation)
 ;; RUNTIME COMPlEXITY is = O(n), because the max iteration through
 ;; the free-list & the Store is 2n which is still O(n), where n = MEMORY_SIZE
-(define (garbage-collect [env : Env]) : void
+(define (garbage-collect [env : Env]) : number
   (cond [(= MEMORY_SIZE (length env)) (error 'garbage-collect "out of memory: Env is full")]
         [else (begin
                 (set! free-list (make-vector MEMORY_SIZE (numV placeholder)))
-                (collect-free-list env))]))
+                (collect-free-list env)
+                0)]))
 
 (test/exn (garbage-collect full-env) "out of memory: Env is full")
 
@@ -317,7 +321,7 @@ Minor conceptual help received from:
                   [v*s (v-f)
                        (type-case Result (interp a env)
                          [v*s (v-a)
-                              (let ([where (new-loc (length env) env)])
+                              (let ([where (new-loc 1 env)])
                                 (interp (closV-body v-f)
                                         (extend-env (bind (closV-param v-f) where) (closV-env v-f))
                                         ))])])]
@@ -334,7 +338,7 @@ Minor conceptual help received from:
     [lamC (p b) (v*s (closV p b env))]
     [boxC (a) (type-case Result (interp a env)
                 [v*s (v-a)
-                     (let ([where (new-loc (length env) env)])
+                     (let ([where (new-loc 1 env)])
                        (v*s (boxV where)
                             ))])]
     [unboxC (a) (type-case Result (interp a env)
