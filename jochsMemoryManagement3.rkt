@@ -52,6 +52,8 @@ Minor conceptual help received from:
   [seqC (e1 : ExprC) (e2 : ExprC)]
   [if0C (test : ExprC) (then : ExprC) (else : ExprC)]
   [consC (f : ExprC) (r : ExprC)]
+  [firstC (v : ExprC)]
+  [restC (v : ExprC)]
   )
 
 ;; types for values
@@ -94,7 +96,7 @@ Minor conceptual help received from:
 
 
 ;; displays the Store and Free-list vectors for user reference
-;; 0 == free memory, 1 == allocated memory (in the Free-list)
+;; 0 == free memory, 1 == allocated memory (in the free-list)
 (define (show-mem) : void
   (begin (display "STORE: ")
          (display Store)
@@ -132,7 +134,6 @@ Minor conceptual help received from:
 
 
 
-
 ;; inserts a value into the store at the speciried location
 ;; and marks this space as allocated in our free-list
 (define (override-store [val : Value] [loc : Location] [env : Env]) : number
@@ -142,6 +143,7 @@ Minor conceptual help received from:
         [else (begin
                 (vector-set! Store loc val)
                 (alloc-mem 1 loc env))]))
+
 
 
 ;; ############################ NEW-LOC / FREE-LOC ##############################
@@ -214,7 +216,7 @@ Minor conceptual help received from:
 
 
 
-;; ############################ PARSE ##############################
+;; ############################# PARSE ###############################
 (define (parse [s : s-expression]) : ExprS
   ;; parse S-expressions into a surface representation that can be programmatically manipulated
   (cond [(s-exp-number? s) (numS (s-exp->number s))]
@@ -248,6 +250,8 @@ Minor conceptual help received from:
                              (parse (third sl))
                              (parse (fourth sl)))]
                 [(cons) (consS (parse (second sl)) (parse (third sl)))]
+                [(first) (firstS (parse (second sl)))]
+                [(rest) (restS (parse (second sl)))]
                 [else (appS (parse (first sl))
                             (parse (second sl)))])]))]
         [else (error 'parse "invalid input")]
@@ -268,7 +272,7 @@ Minor conceptual help received from:
                                                (unboxS (varS 'b))))))
 
 
-;; ############################ DESUGAR ##############################
+;; ############################# DESUGAR ###############################
 (define (desugar [as : ExprS]) : ExprC
   ;; transform programs in surface syntax representation into core representation
   (type-case ExprS as
@@ -290,8 +294,8 @@ Minor conceptual help received from:
     [seqS (e1 e2) (seqC (desugar e1) (desugar e2))]
     [if0S (t y n) (if0C (desugar t) (desugar y) (desugar n))]
     [recS (n f b) (desugar (withS n (numS -1) (seqS (setS n f) b)))]
-    [firstS (e) (desugar e)]
-    [restS (e) (desugar e)]
+    [firstS (e) (firstC (desugar e))]
+    [restS (e) (restC (desugar e))]
     [consS (f r) (consC (desugar f) (desugar r))]
     ))
 
@@ -380,6 +384,8 @@ Minor conceptual help received from:
                              (interp n env)
                              (interp y env))])]
     [consC (f r) (v*s (consV f r))]
+    [firstC (v) (v*s (consV v v))]
+    [restC (v) (v*s (consV v v))]
     ))
 
 
@@ -392,7 +398,7 @@ Minor conceptual help received from:
          (numV (* (numV-n l) (numV-n r)))]
         [else (error 'num* "bad arg")]))
 
-;; ############################ ASW ##############################
+;; ############################# ASW ###############################
 (define (asw [s : s-expression]) : Value
   ;; A Swell Wrapper function to interp expressions
   ;;  w/out typing interp, desugar and parse and our-functions
